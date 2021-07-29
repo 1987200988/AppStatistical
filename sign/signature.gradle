@@ -1,0 +1,96 @@
+import org.gradle.internal.os.OperatingSystem
+
+android.applicationVariants.all { variant ->
+    variant.assemble.doLast {
+        variant.outputs.all {
+            println("> Task :signature:start:" + variant.flavorName + ":" + OperatingSystem.current())
+            if (variant.flavorName == "byd" || variant.flavorName == "") {
+                if (OperatingSystem.current().isMacOsX() || OperatingSystem.current().isWindows()) {
+                    signWithPlatform(project, outputFile, outputFileName)
+                } else if (OperatingSystem.current().isLinux() || OperatingSystem.current().isUnix()){
+                    signWithPlatform(project, outputFile, outputFileName)
+                } else {
+                    signWithPlatform(project, outputFile, outputFileName)
+                }
+            } else if (variant.flavorName == "chj"){
+                signWithPlatform(project, outputFile, outputFileName)
+            }
+            println("> Task :signature:end")
+        }
+    }
+}
+
+def signWithPlatform(Project project, File outputFile, def outputFileName) {
+    println("> Task :signature:platform:start")
+
+    def pemPath = "sign/platform.x509.pem"
+    def pk8Path = "sign/platform.pk8"
+
+    def libs = new File(project.rootDir, "sign/libs")
+    def signApk = new File(project.rootDir, "sign/platform.jar")
+    def pem = new File(project.rootDir, pemPath)
+    def pk8 = new File(project.rootDir, pk8Path)
+
+    if (outputFile.exists() && libs.exists() && signApk.exists() && pem.exists() && pk8.exists()) {
+        try {
+            def newFileName = "cache.apk";
+            def newFile = new File(outputFile.parent, newFileName)
+
+            exec {
+                commandLine 'java', "-Djava.library.path=${libs}", '-jar', "${signApk}", "${pem}", "${pk8}", "${outputFile}", "${newFile}"
+            }
+
+            delete outputFile
+
+            copy {
+                from outputFile.parent
+                into outputFile.parent
+                include newFileName
+                rename (newFileName, outputFileName)
+            }
+
+            delete newFile
+        } catch (Exception e) {
+            println(e)
+        }
+    } else {
+        println("needed file is missing.")
+    }
+
+    println("> Task :signature:platform:end")
+}
+
+def signWithBYDSignature(Project project, File outputFile, def outputFileName) {
+    println("> Task :signature:byd:start")
+
+    def libs = new File(project.rootDir, "sign/libs")
+    def signApk = new File(project.rootDir, "sign/sign_key_client_mac")
+
+    if (outputFile.exists() && libs.exists() && signApk.exists()) {
+        try {
+            def newFileName = "cache.apk";
+            def newFile = new File(outputFile.parent, newFileName)
+
+            exec {
+                commandLine "${signApk}", '-p', 'BYD', '-v', 'user', '-f', "${outputFile}", '-o', "${newFile}"
+            }
+
+            delete outputFile
+
+            copy {
+                from outputFile.parent
+                into outputFile.parent
+                include newFileName
+                rename (newFileName, outputFileName)
+            }
+
+            delete newFile
+        } catch (Exception e) {
+            println(e)
+        }
+    } else {
+        println("needed file is missing.")
+    }
+
+    println("> Task :signature:byd:end")
+}

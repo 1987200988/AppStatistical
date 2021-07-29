@@ -1,0 +1,111 @@
+import org.gradle.api.Project
+import org.gradle.api.artifacts.component.ComponentIdentifier
+import org.gradle.api.artifacts.component.ComponentSelector
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ModuleComponentSelector
+import org.gradle.api.artifacts.result.DependencyResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+
+// 集成机构系统用到的task，将所有依赖转成json写入文件，供jenkins job读取
+project.afterEvaluate {
+    project.android.applicationVariants.all { variant ->
+        tasks.create(name: "getDependenciesJson${variant.name.capitalize()}",
+                description: "集成构建系统需要用到的task,用json展示所有依赖") {
+            doLast {
+                List<Map<String, String>> deps = new ArrayList<>()
+                Configuration configuration
+                try {
+                    configuration = project.configurations."${variant.name}CompileClasspath"
+                } catch (Exception e) {
+                    configuration = project.configurations."_${variant.name}Compile"
+                }
+                configuration.resolvedConfiguration.lenientConfiguration.allModuleDependencies.each {
+                    def identifier = it.module.id
+                    // println("${identifier.group}:${identifier.name}:${identifier.version}")
+                    if (identifier.group != null && identifier.group != 'unspecified' &&
+                            identifier.name != null && identifier.name != 'unspecified' &&
+                            identifier.version != null && identifier.version != 'unspecified') {
+                        deps.add(["group"   : identifier.group,
+                                  "artifact": identifier.name,
+                                  "version" : identifier.version])
+                    }
+                }
+                File jsonFile = new File(project.rootProject.rootDir, ".centralbuild_versions.json")
+                jsonFile.write(new groovy.json.JsonBuilder(deps).toPrettyString())
+            }
+        }
+        
+        tasks.create(name: "getDependenciesTreeJson${variant.name.capitalize()}", description: "存储所有依赖") {
+            doLast {
+                Map<String, Object> root = new HashMap<String, Object>()
+                Configuration configuration
+                try {
+                    configuration = project.configurations."${variant.name}CompileClasspath"
+                } catch (Exception e) {
+                    configuration = project.configurations."_${variant.name}Compile"
+                }
+                if (configuration.isCanBeResolved()) {
+                    root = toStrMap(
+                        configuration.getIncoming()
+                                .getResolutionResult()
+                                .getRoot()
+                                .getDependencies(), new HashMap<String,Boolean>())
+                }
+                File jsonFile = new File(project.rootProject.rootDir, ".centralbuild_versions_tree.json")
+                jsonFile.write(new groovy.json.JsonBuilder(root).toPrettyString())
+            }
+        }
+    }
+}
+
+private static HashMap toStrMap(Set<? extends DependencyResult> dependencies, Map<String,Boolean> existMap) {
+     HashMap map = new HashMap()
+     for (DependencyResult d : dependencies) {
+         if (d instanceof UnresolvedDependencyResult) {
+             map[getName(d)] = new HashMap()
+         } else if (d instanceof ResolvedDependencyResult) {
+         		def name = getName(d)
+         		if(existMap[name]==null){
+         			existMap[name]=true
+         			map[name] = toStrMap(d.getSelected().getDependencies(),existMap)
+         		}else{
+                map[name] = new HashMap()
+            }
+         }
+     }
+     return map
+ }
+
+private static String getName(DependencyResult dependency) {
+    ComponentSelector requested = dependency.getRequested()
+    if (dependency instanceof ResolvedDependencyResult) {
+        ComponentIdentifier selected = dependency.getSelected().getId()
+        if (requested.matchesStrictly(selected)) {
+            return requested.getDisplayName()
+        }
+        if (requested instanceof ModuleComponentSelector && selected instanceof ModuleComponentIdentifier) {
+            if (requested.getGroup() == selected.getGroup() &&
+                    requested.getModule() == selected.getModule() &&
+                    requested.getVersionConstraint().getPreferredVersion() != selected.getVersion()) {
+                return requested.getDisplayName() + " -> " + selected.getVersion()
+            }
+        }
+        return requested.getDisplayName() + " -> " + selected.getDisplayName()
+    } else if (dependency instanceof UnresolvedDependencyResult) {
+        ComponentSelector attempted = dependency.getAttempted()
+        if (requested == attempted) {
+            return requested.getDisplayName()
+        }
+        if (requested instanceof ModuleComponentSelector && attempted instanceof ModuleComponentSelector) {
+            if (requested.getGroup() == attempted.getGroup() &&
+                    requested.getModule() == attempted.getModule() &&
+                    requested.getVersionConstraint() != attempted.getVersionConstraint()) {
+
+                return requested.getDisplayName() + " -> " + attempted.getVersionConstraint().getPreferredVersion()
+            }
+        }
+        return requested.getDisplayName() + " -> " + attempted.getDisplayName()
+    }
+    return ""
+}

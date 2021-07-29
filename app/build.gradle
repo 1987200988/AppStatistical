@@ -1,6 +1,8 @@
 plugins {
     id 'com.android.application'
+
 }
+apply from: '../sign/signature.gradle'
 
 android {
     compileSdkVersion 30
